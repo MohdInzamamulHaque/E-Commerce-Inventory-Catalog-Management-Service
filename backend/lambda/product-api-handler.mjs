@@ -29,19 +29,10 @@ const parseJson = (value) => {
 }
 
 const buildUpdateExpression = (payload) => {
-  const allowedFields = [
-    'product_name',
-    'category',
-    'description',
-    'image_url',
-    'price',
-    'quantity',
-    'sales_count',
-    'popularity_score',
-    'vendor_id',
-  ]
-
-  const keys = Object.keys(payload).filter((key) => allowedFields.includes(key) && payload[key] !== undefined)
+  const blockedFields = ['product_id']
+  const keys = Object.keys(payload).filter(
+    (key) => !blockedFields.includes(key) && payload[key] !== undefined,
+  )
   if (!keys.length) return null
 
   const names = {}

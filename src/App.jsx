@@ -1,46 +1,32 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import {
-  addProduct,
   adjustStock,
+  createProductInApi,
   createInitialState,
+  deleteProductInApi,
   fetchProductsFromApi,
   getLowStockItems,
   summarizeInventory,
   toggleNotificationChannel,
   updateProductQuantityInApi,
-  updateCatalogDetails,
 } from './services/inventoryService'
-import { useOrderEventSimulator } from './hooks/useOrderEventSimulator'
-
-const orderEventSeed = [
-  { sku: 'SKU-TS-BLK-M', quantity: 2 },
-  { sku: 'SKU-HD-NVY-L', quantity: 1 },
-]
 
 const PRODUCTS_API_BASE = 'https://sz76ruzkqe.execute-api.us-east-1.amazonaws.com/prod'
 
 function App() {
   const [state, setState] = useState(createInitialState)
   const [selectedVendorId, setSelectedVendorId] = useState('VENDOR-100')
+  const [syncError, setSyncError] = useState('')
   const [newProduct, setNewProduct] = useState({
+    productId: '',
     name: '',
     category: '',
     description: '',
     imageUrl: '',
-    reorderThreshold: 10,
-    sku: '',
-    variantLabel: '',
-    price: 0,
-    stock: 0,
-  })
-  const [editingProductId, setEditingProductId] = useState('')
-  const [catalogEdit, setCatalogEdit] = useState({
-    name: '',
-    category: '',
-    description: '',
-    imageUrl: '',
-    reorderThreshold: 10,
+    reorderThreshold: '',
+    price: '',
+    stock: '',
   })
   const [stockDelta, setStockDelta] = useState({})
 
@@ -69,71 +55,63 @@ function App() {
 
   const onVendorChange = (event) => {
     setSelectedVendorId(event.target.value)
-    setEditingProductId('')
   }
 
   const onNewProductFieldChange = (field, value) => {
     setNewProduct((current) => ({ ...current, [field]: value }))
   }
 
-  const handleAddProduct = (event) => {
+  const handleAddProduct = async (event) => {
     event.preventDefault()
-    if (!newProduct.name || !newProduct.sku || !newProduct.variantLabel) {
+    if (!newProduct.productId || !newProduct.name) {
       return
     }
 
-    setState((current) =>
-      addProduct(current, selectedVendorId, {
-        name: newProduct.name,
-        category: newProduct.category || 'General',
-        description: newProduct.description || 'No description available',
-        imageUrl: newProduct.imageUrl,
-        reorderThreshold: Number(newProduct.reorderThreshold),
-        sku: newProduct.sku,
-        variantLabel: newProduct.variantLabel,
-        price: Number(newProduct.price),
-        stock: Number(newProduct.stock),
-      }),
-    )
+    const payload = {
+      product_id: newProduct.productId.trim(),
+      product_name: newProduct.name.trim(),
+      vendor_id: selectedVendorId,
+      category: newProduct.category || 'General',
+      description: newProduct.description || 'No description available',
+      image_url: newProduct.imageUrl || '',
+      popularity_score: 0,
+      price: Number(newProduct.price || 0),
+      quantity: Number(newProduct.stock || 0),
+      sales_count: 0,
+      reorder_threshold: Number(newProduct.reorderThreshold || 10),
+    }
 
-    setNewProduct({
-      name: '',
-      category: '',
-      description: '',
-      imageUrl: '',
-      reorderThreshold: 10,
-      sku: '',
-      variantLabel: '',
-      price: 0,
-      stock: 0,
-    })
+    try {
+      await createProductInApi(PRODUCTS_API_BASE, payload)
+      const refreshedProducts = await fetchProductsFromApi(PRODUCTS_API_BASE)
+      setState((current) => ({ ...current, products: refreshedProducts }))
+      setSyncError('')
+      setNewProduct({
+        productId: '',
+        name: '',
+        category: '',
+        description: '',
+        imageUrl: '',
+        reorderThreshold: '',
+        price: '',
+        stock: '',
+      })
+    } catch (error) {
+      console.error('Failed to create product in API', error)
+      setSyncError('Could not create product in Product API. Please check required fields and API deployment.')
+    }
   }
 
-  const openCatalogEdit = (product) => {
-    setEditingProductId(product.product_id)
-    setCatalogEdit({
-      name: product.name,
-      category: product.category,
-      description: product.description || '',
-      imageUrl: product.image_url || '',
-      reorderThreshold: product.reorder_threshold,
-    })
-  }
-
-  const saveCatalogEdit = (event) => {
-    event.preventDefault()
-    if (!editingProductId) return
-    setState((current) =>
-      updateCatalogDetails(current, {
-        productId: editingProductId,
-        name: catalogEdit.name,
-        category: catalogEdit.category,
-        description: catalogEdit.description,
-        imageUrl: catalogEdit.imageUrl,
-        reorderThreshold: Number(catalogEdit.reorderThreshold),
-      }),
-    )
-    setEditingProductId('')
+  const deleteProduct = async (productId) => {
+    try {
+      await deleteProductInApi(PRODUCTS_API_BASE, productId)
+      const refreshedProducts = await fetchProductsFromApi(PRODUCTS_API_BASE)
+      setState((current) => ({ ...current, products: refreshedProducts }))
+      setSyncError('')
+    } catch (error) {
+      console.error('Failed to delete product in API', error)
+      setSyncError('Could not delete product from Product API. Please check API deployment and permissions.')
+    }
   }
 
   const runStockAdjustment = async (productId, sku, direction) => {
@@ -141,33 +119,30 @@ function App() {
     const quantity = Number(stockDelta[key] || 0)
     if (!quantity) return
 
-    let nextQuantity = null
-    setState((current) =>
-      {
-        const nextState = adjustStock(current, {
+    const product = state.products.find((item) => item.product_id === productId)
+    if (!product) return
+
+    const signedQty = direction === 'increase' ? quantity : quantity * -1
+    const currentQuantity = Number(product.quantity ?? 0)
+    const nextQuantity = Math.max(0, currentQuantity + signedQty)
+
+    try {
+      await updateProductQuantityInApi(PRODUCTS_API_BASE, productId, nextQuantity)
+      setSyncError('')
+      setState((current) =>
+        adjustStock(current, {
           productId,
           sku,
           quantity,
           action: direction,
-        })
-        const updatedProduct = nextState.products.find((item) => item.product_id === productId)
-        nextQuantity = updatedProduct?.quantity ?? null
-        return nextState
-      },
-    )
-
-    setStockDelta((current) => ({ ...current, [key]: '' }))
-
-    if (nextQuantity === null) return
-
-    try {
-      await updateProductQuantityInApi(PRODUCTS_API_BASE, productId, nextQuantity)
+        }),
+      )
+      setStockDelta((current) => ({ ...current, [key]: '' }))
     } catch (error) {
       console.error('Failed to persist quantity in API', error)
+      setSyncError('Could not update quantity in Product API. Check API Gateway PUT /products/{product_id} deployment.')
     }
   }
-
-  const triggerOrderEvent = useOrderEventSimulator(setState, selectedVendorId, orderEventSeed)
 
   const notificationSettings = state.notifications[selectedVendorId]
 
@@ -218,6 +193,14 @@ function App() {
         </div>
       </header>
 
+      {syncError && (
+        <section className="panel">
+          <p className="muted" style={{ color: '#b91c1c' }}>
+            {syncError}
+          </p>
+        </section>
+      )}
+
       <section className="metric-grid">
         <article className="metric-card">
           <p>Total Products</p>
@@ -239,8 +222,13 @@ function App() {
 
       <section className="panel-grid">
         <article className="panel">
-          <h3>Add New Product / SKU Variant</h3>
+          <h3>Add New Product</h3>
           <form className="form-grid" onSubmit={handleAddProduct}>
+            <input
+              placeholder="Product ID (e.g. PROD010)"
+              value={newProduct.productId}
+              onChange={(event) => onNewProductFieldChange('productId', event.target.value)}
+            />
             <input
               placeholder="Product name"
               value={newProduct.name}
@@ -264,32 +252,22 @@ function App() {
             <input
               type="number"
               min="1"
-              placeholder="Reorder threshold"
+              placeholder="Reorder alert threshold"
               value={newProduct.reorderThreshold}
               onChange={(event) => onNewProductFieldChange('reorderThreshold', event.target.value)}
-            />
-            <input
-              placeholder="SKU"
-              value={newProduct.sku}
-              onChange={(event) => onNewProductFieldChange('sku', event.target.value)}
-            />
-            <input
-              placeholder="Variant label (e.g. Black / M)"
-              value={newProduct.variantLabel}
-              onChange={(event) => onNewProductFieldChange('variantLabel', event.target.value)}
             />
             <input
               type="number"
               min="0"
               step="0.01"
-              placeholder="Price"
+              placeholder="Unit price"
               value={newProduct.price}
               onChange={(event) => onNewProductFieldChange('price', event.target.value)}
             />
             <input
               type="number"
               min="0"
-              placeholder="Initial stock"
+              placeholder="Initial quantity in stock"
               value={newProduct.stock}
               onChange={(event) => onNewProductFieldChange('stock', event.target.value)}
             />
@@ -351,8 +329,8 @@ function App() {
                     <h4>{product.name}</h4>
                     <p className="muted">{product.category}</p>
                   </div>
-                  <button type="button" onClick={() => openCatalogEdit(product)}>
-                    Edit Catalog
+                  <button type="button" onClick={() => deleteProduct(product.product_id)}>
+                    Delete Product
                   </button>
                 </div>
                 <p className="muted">{product.description || 'No description available'}</p>
@@ -372,7 +350,6 @@ function App() {
                 <thead>
                   <tr>
                     <th>SKU</th>
-                    <th>Variant</th>
                     <th>Price</th>
                     <th>Current Stock</th>
                     <th>Stock Action</th>
@@ -385,7 +362,6 @@ function App() {
                     return (
                       <tr key={variant.sku}>
                         <td>{variant.sku}</td>
-                        <td>{variant.variant_label}</td>
                         <td>₹{variant.price.toLocaleString()}</td>
                         <td>
                           {variant.current_stock}
@@ -428,63 +404,7 @@ function App() {
         {vendorCatalog.length === 0 && <p>No catalog entries for this vendor yet.</p>}
       </section>
 
-      {editingProductId && (
-        <section className="panel">
-          <h3>Update Catalog Details</h3>
-          <form className="form-grid" onSubmit={saveCatalogEdit}>
-            <input
-              placeholder="Product name"
-              value={catalogEdit.name}
-              onChange={(event) => setCatalogEdit((current) => ({ ...current, name: event.target.value }))}
-            />
-            <input
-              placeholder="Category"
-              value={catalogEdit.category}
-              onChange={(event) => setCatalogEdit((current) => ({ ...current, category: event.target.value }))}
-            />
-            <input
-              placeholder="Description"
-              value={catalogEdit.description}
-              onChange={(event) =>
-                setCatalogEdit((current) => ({ ...current, description: event.target.value }))
-              }
-            />
-            <input
-              placeholder="Image URL"
-              value={catalogEdit.imageUrl}
-              onChange={(event) => setCatalogEdit((current) => ({ ...current, imageUrl: event.target.value }))}
-            />
-            <input
-              type="number"
-              min="1"
-              value={catalogEdit.reorderThreshold}
-              onChange={(event) =>
-                setCatalogEdit((current) => ({ ...current, reorderThreshold: event.target.value }))
-              }
-            />
-            <button type="submit">Save Catalog Changes</button>
-          </form>
-        </section>
-      )}
-
       <section className="panel-grid">
-        <article className="panel">
-          <h3>Order Integration Simulator</h3>
-          <p className="muted">Applies order events and logs stock transactions for each SKU.</p>
-          <div className="button-row">
-            <button type="button" onClick={() => triggerOrderEvent('order_placed')}>
-              Order Placed
-            </button>
-            <button type="button" onClick={() => triggerOrderEvent('order_cancelled')}>
-              Order Cancelled
-            </button>
-            <button type="button" onClick={() => triggerOrderEvent('order_refunded')}>
-              Order Refunded
-            </button>
-          </div>
-          <p className="muted">Seed Items: {orderEventSeed.map((item) => `${item.sku} x ${item.quantity}`).join(', ')}</p>
-        </article>
-
         <article className="panel">
           <h3>Current Low-Stock Indicators</h3>
           <div className="lowstock-list">

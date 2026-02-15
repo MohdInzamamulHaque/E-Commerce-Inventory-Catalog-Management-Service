@@ -180,7 +180,7 @@ const normalizeApiItem = (item) => {
         sku: normalized.sku || `${productId}-STD`,
         variant_label: normalized.variant_label || 'Default Variant',
         price: Number(normalized.price ?? 0),
-        current_stock: Number(normalized.current_stock ?? 0),
+        current_stock: Number(normalized.current_stock ?? normalized.quantity ?? 0),
       },
     ],
   }
@@ -195,6 +195,32 @@ export const updateProductQuantityInApi = async (apiBaseUrl, productId, quantity
 
   if (!response.ok) {
     throw new Error(`Failed to update quantity (${response.status})`)
+  }
+
+  return response.json()
+}
+
+export const createProductInApi = async (apiBaseUrl, payload) => {
+  const response = await fetch(`${apiBaseUrl}/products`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to create product (${response.status})`)
+  }
+
+  return response.json()
+}
+
+export const deleteProductInApi = async (apiBaseUrl, productId) => {
+  const response = await fetch(`${apiBaseUrl}/products/${encodeURIComponent(productId)}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete product (${response.status})`)
   }
 
   return response.json()
