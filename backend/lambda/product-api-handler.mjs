@@ -35,6 +35,7 @@ const buildUpdateExpression = (payload) => {
     'description',
     'image_url',
     'price',
+    'quantity',
     'sales_count',
     'popularity_score',
     'vendor_id',
@@ -100,6 +101,10 @@ export const handler = async (event) => {
     if (method === 'POST' && path.endsWith('/products')) {
       const payload = parseJson(event.body)
       if (!payload) return response(400, { message: 'Invalid JSON body' })
+
+      if (payload.quantity === undefined) {
+        payload.quantity = 0
+      }
 
       const required = ['product_id', 'product_name', 'vendor_id', 'price']
       const missing = required.filter((field) => payload[field] === undefined || payload[field] === '')

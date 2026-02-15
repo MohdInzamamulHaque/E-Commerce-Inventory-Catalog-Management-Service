@@ -19,6 +19,7 @@ const sampleProducts = [
       'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600&auto=format&fit=crop&q=60',
     popularity_score: 4.5,
     sales_count: 512,
+    quantity: 26,
     reorder_threshold: 15,
     last_updated: nowIso(),
     sku_variants: [
@@ -36,6 +37,7 @@ const sampleProducts = [
       'https://images.unsplash.com/photo-1618354691321-e851c56960d1?w=600&auto=format&fit=crop&q=60',
     popularity_score: 4.7,
     sales_count: 389,
+    quantity: 20,
     reorder_threshold: 10,
     last_updated: nowIso(),
     sku_variants: [
@@ -53,6 +55,7 @@ const sampleProducts = [
       'https://images.unsplash.com/photo-1514228742587-6b1558fcf93a?w=600&auto=format&fit=crop&q=60',
     popularity_score: 4.1,
     sales_count: 245,
+    quantity: 22,
     reorder_threshold: 20,
     last_updated: nowIso(),
     sku_variants: [{ sku: 'SKU-MUG-BLU-350', variant_label: 'Blue / 350ml', price: 499, current_stock: 22 }],
@@ -67,6 +70,7 @@ const sampleProducts = [
       'https://images.unsplash.com/photo-1491637639811-60e2756cc1c7?w=600&auto=format&fit=crop&q=60',
     popularity_score: 4.6,
     sales_count: 301,
+    quantity: 25,
     reorder_threshold: 12,
     last_updated: nowIso(),
     sku_variants: [
@@ -168,6 +172,7 @@ const normalizeApiItem = (item) => {
     image_url: normalized.image_url || '',
     popularity_score: Number(normalized.popularity_score ?? 0),
     sales_count: Number(normalized.sales_count ?? 0),
+    quantity: Number(normalized.quantity ?? normalized.current_stock ?? 0),
     reorder_threshold: Number(normalized.reorder_threshold ?? 10),
     last_updated: nowIso(),
     sku_variants: [
@@ -179,6 +184,20 @@ const normalizeApiItem = (item) => {
       },
     ],
   }
+}
+
+export const updateProductQuantityInApi = async (apiBaseUrl, productId, quantity) => {
+  const response = await fetch(`${apiBaseUrl}/products/${encodeURIComponent(productId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quantity }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to update quantity (${response.status})`)
+  }
+
+  return response.json()
 }
 
 export const fetchProductsFromApi = async (apiBaseUrl) => {
@@ -277,6 +296,7 @@ export const addProduct = (state, vendorId, payload) => {
     image_url: payload.imageUrl || '',
     popularity_score: 4.3,
     sales_count: 0,
+    quantity: Number(payload.stock || 0),
     reorder_threshold: payload.reorderThreshold,
     last_updated: nowIso(),
     sku_variants: [newVariant],
@@ -308,6 +328,7 @@ export const updateCatalogDetails = (state, payload) => {
   product.category = payload.category
   product.description = payload.description || product.description
   product.image_url = payload.imageUrl ?? product.image_url
+  if (payload.quantity !== undefined) product.quantity = Number(payload.quantity)
   product.reorder_threshold = payload.reorderThreshold
   product.last_updated = nowIso()
 
@@ -336,6 +357,8 @@ export const adjustStock = (state, payload) => {
   const previous = variant.current_stock
   const signedQty = payload.action === 'increase' ? payload.quantity : payload.quantity * -1
   variant.current_stock = Math.max(0, variant.current_stock + signedQty)
+  const previousQuantity = Number(product.quantity ?? 0)
+  product.quantity = Math.max(0, previousQuantity + signedQty)
   product.last_updated = nowIso()
 
   addTransaction(nextState, {

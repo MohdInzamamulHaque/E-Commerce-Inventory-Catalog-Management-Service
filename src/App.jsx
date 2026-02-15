@@ -8,6 +8,7 @@ import {
   getLowStockItems,
   summarizeInventory,
   toggleNotificationChannel,
+  updateProductQuantityInApi,
   updateCatalogDetails,
 } from './services/inventoryService'
 import { useOrderEventSimulator } from './hooks/useOrderEventSimulator'
@@ -22,7 +23,6 @@ const PRODUCTS_API_BASE = 'https://sz76ruzkqe.execute-api.us-east-1.amazonaws.co
 function App() {
   const [state, setState] = useState(createInitialState)
   const [selectedVendorId, setSelectedVendorId] = useState('VENDOR-100')
-  const [apiStatus, setApiStatus] = useState('Loading products from API...')
   const [newProduct, setNewProduct] = useState({
     name: '',
     category: '',
@@ -136,19 +136,35 @@ function App() {
     setEditingProductId('')
   }
 
-  const runStockAdjustment = (productId, sku, direction) => {
+  const runStockAdjustment = async (productId, sku, direction) => {
     const key = `${productId}:${sku}`
     const quantity = Number(stockDelta[key] || 0)
     if (!quantity) return
 
+    let nextQuantity = null
     setState((current) =>
-      adjustStock(current, {
-        productId,
-        sku,
-        quantity,
-        action: direction,
-      }),
+      {
+        const nextState = adjustStock(current, {
+          productId,
+          sku,
+          quantity,
+          action: direction,
+        })
+        const updatedProduct = nextState.products.find((item) => item.product_id === productId)
+        nextQuantity = updatedProduct?.quantity ?? null
+        return nextState
+      },
     )
+
+    setStockDelta((current) => ({ ...current, [key]: '' }))
+
+    if (nextQuantity === null) return
+
+    try {
+      await updateProductQuantityInApi(PRODUCTS_API_BASE, productId, nextQuantity)
+    } catch (error) {
+      console.error('Failed to persist quantity in API', error)
+    }
   }
 
   const triggerOrderEvent = useOrderEventSimulator(setState, selectedVendorId, orderEventSeed)
@@ -164,7 +180,6 @@ function App() {
       try {
         const apiProducts = await fetchProductsFromApi(PRODUCTS_API_BASE)
         if (!apiProducts.length) {
-          setApiStatus('API responded with no products. Showing default sample data.')
           return
         }
 
@@ -175,9 +190,8 @@ function App() {
           }
           return apiProducts[0].vendor_id
         })
-        setApiStatus('Connected to API Gateway and loaded products from DynamoDB.')
       } catch (error) {
-        setApiStatus(`API unavailable (${error.message}). Showing local sample data.`)
+        console.error('API unavailable. Showing local sample data.', error)
       }
     }
 
@@ -203,10 +217,6 @@ function App() {
           </select>
         </div>
       </header>
-
-      <section className="panel api-status-panel">
-        <p className="muted">{apiStatus}</p>
-      </section>
 
       <section className="metric-grid">
         <article className="metric-card">
@@ -349,6 +359,7 @@ function App() {
                 <div className="meta-row">
                   <span>ID: {product.product_id}</span>
                   <span>Vendor: {product.vendor_id}</span>
+                  <span>Quantity: {product.quantity ?? 0}</span>
                   <span>Popularity: {product.popularity_score?.toFixed?.(1) ?? '4.3'}</span>
                   <span>Sales: {product.sales_count ?? 0}</span>
                   <span>Reorder threshold: {product.reorder_threshold}</span>
