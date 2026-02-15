@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import {
   addProduct,
   adjustStock,
   createInitialState,
+  fetchProductsFromApi,
   getLowStockItems,
   summarizeInventory,
   toggleNotificationChannel,
@@ -16,9 +17,12 @@ const orderEventSeed = [
   { sku: 'SKU-HD-NVY-L', quantity: 1 },
 ]
 
+const PRODUCTS_API_BASE = 'https://sz76ruzkqe.execute-api.us-east-1.amazonaws.com/prod'
+
 function App() {
   const [state, setState] = useState(createInitialState)
   const [selectedVendorId, setSelectedVendorId] = useState('VENDOR-100')
+  const [apiStatus, setApiStatus] = useState('Loading products from API...')
   const [newProduct, setNewProduct] = useState({
     name: '',
     category: '',
@@ -40,8 +44,10 @@ function App() {
   })
   const [stockDelta, setStockDelta] = useState({})
 
-  const vendorOptions = state.vendors
-  const selectedVendor = vendorOptions.find((vendor) => vendor.vendor_id === selectedVendorId)
+  const vendorOptions = useMemo(
+    () => [...new Set(state.products.map((product) => product.vendor_id).filter(Boolean))].sort(),
+    [state.products],
+  )
 
   const vendorCatalog = useMemo(
     () => state.products.filter((product) => product.vendor_id === selectedVendorId),
@@ -153,6 +159,31 @@ function App() {
     setState((current) => toggleNotificationChannel(current, selectedVendorId, channel))
   }
 
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        const apiProducts = await fetchProductsFromApi(PRODUCTS_API_BASE)
+        if (!apiProducts.length) {
+          setApiStatus('API responded with no products. Showing default sample data.')
+          return
+        }
+
+        setState((current) => ({ ...current, products: apiProducts }))
+        setSelectedVendorId((currentVendorId) => {
+          if (apiProducts.some((item) => item.vendor_id === currentVendorId)) {
+            return currentVendorId
+          }
+          return apiProducts[0].vendor_id
+        })
+        setApiStatus('Connected to API Gateway and loaded products from DynamoDB.')
+      } catch (error) {
+        setApiStatus(`API unavailable (${error.message}). Showing local sample data.`)
+      }
+    }
+
+    loadProducts()
+  }, [])
+
   return (
     <div className="dashboard-shell">
       <header className="topbar">
@@ -164,14 +195,18 @@ function App() {
         <div className="vendor-picker">
           <label htmlFor="vendor-select">Active Vendor</label>
           <select id="vendor-select" value={selectedVendorId} onChange={onVendorChange}>
-            {vendorOptions.map((vendor) => (
-              <option key={vendor.vendor_id} value={vendor.vendor_id}>
-                {vendor.name}
+            {vendorOptions.map((vendorId) => (
+              <option key={vendorId} value={vendorId}>
+                {vendorId}
               </option>
             ))}
           </select>
         </div>
       </header>
+
+      <section className="panel api-status-panel">
+        <p className="muted">{apiStatus}</p>
+      </section>
 
       <section className="metric-grid">
         <article className="metric-card">
@@ -254,7 +289,7 @@ function App() {
 
         <article className="panel">
           <h3>Low-Stock Notifications (SNS Style Demo)</h3>
-          <p className="muted">Vendor: {selectedVendor?.name}</p>
+          <p className="muted">Vendor: {selectedVendorId}</p>
           <div className="toggle-row">
             <label>
               <input

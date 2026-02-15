@@ -133,6 +133,65 @@ const addTransaction = (nextState, payload) => {
   })
 }
 
+const toPrimitive = (value) => {
+  if (value && typeof value === 'object') {
+    if ('S' in value) return value.S
+    if ('N' in value) return Number(value.N)
+    if ('BOOL' in value) return Boolean(value.BOOL)
+  }
+  return value
+}
+
+const isDynamoTypedItem = (item) => {
+  if (!item || typeof item !== 'object') return false
+  return Object.values(item).some(
+    (value) => value && typeof value === 'object' && ('S' in value || 'N' in value || 'BOOL' in value),
+  )
+}
+
+const normalizeApiItem = (item) => {
+  if (!item || typeof item !== 'object') return null
+
+  const normalized = isDynamoTypedItem(item)
+    ? Object.fromEntries(Object.entries(item).map(([key, value]) => [key, toPrimitive(value)]))
+    : item
+
+  const productId = normalized.product_id || uid('PROD')
+  const productName = normalized.product_name || normalized.name || 'Unnamed product'
+
+  return {
+    product_id: productId,
+    vendor_id: normalized.vendor_id || 'UNASSIGNED-VENDOR',
+    name: productName,
+    category: normalized.category || 'General',
+    description: normalized.description || 'No description available',
+    image_url: normalized.image_url || '',
+    popularity_score: Number(normalized.popularity_score ?? 0),
+    sales_count: Number(normalized.sales_count ?? 0),
+    reorder_threshold: Number(normalized.reorder_threshold ?? 10),
+    last_updated: nowIso(),
+    sku_variants: [
+      {
+        sku: normalized.sku || `${productId}-STD`,
+        variant_label: normalized.variant_label || 'Default Variant',
+        price: Number(normalized.price ?? 0),
+        current_stock: Number(normalized.current_stock ?? 0),
+      },
+    ],
+  }
+}
+
+export const fetchProductsFromApi = async (apiBaseUrl) => {
+  const response = await fetch(`${apiBaseUrl}/products`)
+  if (!response.ok) {
+    throw new Error(`Products API request failed (${response.status})`)
+  }
+
+  const payload = await response.json()
+  const rawItems = Array.isArray(payload) ? payload : payload.items || payload.data || []
+  return rawItems.map(normalizeApiItem).filter(Boolean)
+}
+
 export const createInitialState = () => ({
   vendors: sampleVendors,
   products: sampleProducts,
