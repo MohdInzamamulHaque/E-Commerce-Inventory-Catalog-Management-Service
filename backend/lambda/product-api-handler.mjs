@@ -1,10 +1,15 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
+import { PublishCommand, SNSClient } from '@aws-sdk/client-sns'
 
 const REGION = process.env.AWS_REGION || 'ap-south-1'
 const TABLE_NAME = process.env.PRODUCT_TABLE || 'Product'
+const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN || ''
+const LOW_STOCK_ALERTS_ENABLED = process.env.LOW_STOCK_ALERTS_ENABLED !== 'false'
+const DEFAULT_REORDER_THRESHOLD = Number(process.env.DEFAULT_REORDER_THRESHOLD ?? 10)
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
+const sns = new SNSClient({ region: REGION })
 
 const headers = {
   'Access-Control-Allow-Origin': '*',
@@ -26,6 +31,54 @@ const parseJson = (value) => {
   } catch {
     return null
   }
+}
+
+const toNumber = (value, fallback = 0) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const evaluateLowStock = (item) => {
+  if (!item) return null
+
+  const currentStock = toNumber(item.quantity ?? item.current_stock ?? item.stock, 0)
+  const reorderThreshold =
+    item.reorder_threshold !== undefined && item.reorder_threshold !== null && item.reorder_threshold !== ''
+      ? toNumber(item.reorder_threshold, NaN)
+      : toNumber(DEFAULT_REORDER_THRESHOLD, NaN)
+
+  if (!Number.isFinite(reorderThreshold)) return null
+
+  return {
+    currentStock,
+    reorderThreshold,
+    isLowStock: currentStock <= reorderThreshold,
+  }
+}
+
+const publishLowStockAlert = async (item, eventType) => {
+  if (!LOW_STOCK_ALERTS_ENABLED || !SNS_TOPIC_ARN) return
+
+  const lowStock = evaluateLowStock(item)
+  if (!lowStock?.isLowStock) return
+
+  const message = {
+    event_type: eventType,
+    product_id: item.product_id,
+    product_name: item.product_name || item.name || 'Unknown Product',
+    vendor_id: item.vendor_id || 'UNKNOWN-VENDOR',
+    current_stock: lowStock.currentStock,
+    reorder_threshold: lowStock.reorderThreshold,
+    timestamp: new Date().toISOString(),
+  }
+
+  await sns.send(
+    new PublishCommand({
+      TopicArn: SNS_TOPIC_ARN,
+      Subject: `Low stock alert: ${message.product_id}`,
+      Message: JSON.stringify(message),
+    }),
+  )
 }
 
 const buildUpdateExpression = (payload) => {
@@ -97,6 +150,10 @@ export const handler = async (event) => {
         payload.quantity = 0
       }
 
+      if (payload.reorder_threshold === undefined || payload.reorder_threshold === null || payload.reorder_threshold === '') {
+        payload.reorder_threshold = DEFAULT_REORDER_THRESHOLD
+      }
+
       const required = ['product_id', 'product_name', 'vendor_id', 'price']
       const missing = required.filter((field) => payload[field] === undefined || payload[field] === '')
       if (missing.length) {
@@ -110,6 +167,12 @@ export const handler = async (event) => {
           ConditionExpression: 'attribute_not_exists(product_id)',
         }),
       )
+
+      try {
+        await publishLowStockAlert(payload, 'product_created')
+      } catch (snsError) {
+        console.error('SNS publish failed after product create', snsError)
+      }
 
       return response(201, { message: 'Product created', item: payload })
     }
@@ -130,6 +193,12 @@ export const handler = async (event) => {
           ReturnValues: 'ALL_NEW',
         }),
       )
+
+      try {
+        await publishLowStockAlert(result.Attributes, 'product_updated')
+      } catch (snsError) {
+        console.error('SNS publish failed after product update', snsError)
+      }
 
       return response(200, { message: 'Product updated', item: result.Attributes })
     }

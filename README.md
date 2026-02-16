@@ -72,17 +72,3 @@ This frontend implementation covers the **Vendor Dashboard Interface** and simul
 Supporting backend deliverables (schema/index design, architecture, sample dataset) are documented in `docs/`.
 
 ---
-
-## AWS Hosting Readiness Status
-
-### Frontend (current status)
-- ✅ **Ready** for hosting as a static React app (AWS Amplify/S3+CloudFront)
-
-### Backend (current status)
-- ⚠️ **Not yet implemented in this repository** as real AWS runtime code for API Gateway → Lambda → DynamoDB.
-- Current dashboard business logic is mock/in-memory in:
-  - `src/services/inventoryService.js`
-
-To go production-ready, implement real Lambda APIs and switch frontend data calls from local service to HTTP API calls.
-
-See: `docs/aws-hosting-guide.md` for exact setup steps.
