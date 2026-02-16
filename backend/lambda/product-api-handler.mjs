@@ -1,6 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
-import { PublishCommand, SNSClient } from '@aws-sdk/client-sns'
+import { PublishCommand, SNSClient, SubscribeCommand } from '@aws-sdk/client-sns'
 
 const REGION = process.env.AWS_REGION || 'ap-south-1'
 const TABLE_NAME = process.env.PRODUCT_TABLE || 'Product'
@@ -32,6 +32,8 @@ const parseJson = (value) => {
     return null
   }
 }
+
+const isEmail = (value) => /^(?:[a-zA-Z0-9_'^&\/+{}=?`~.-]+)@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/.test(value)
 
 const toNumber = (value, fallback = 0) => {
   const parsed = Number(value)
@@ -175,6 +177,37 @@ export const handler = async (event) => {
       }
 
       return response(201, { message: 'Product created', item: payload })
+    }
+
+    if (method === 'POST' && path.endsWith('/notifications/subscribe')) {
+      const payload = parseJson(event.body)
+      if (!payload) return response(400, { message: 'Invalid JSON body' })
+
+      const email = String(payload.email || '').trim().toLowerCase()
+      const vendorId = String(payload.vendor_id || 'UNKNOWN-VENDOR').trim()
+
+      if (!email || !isEmail(email)) {
+        return response(400, { message: 'Valid email is required' })
+      }
+
+      if (!SNS_TOPIC_ARN) {
+        return response(500, { message: 'SNS topic is not configured in Lambda environment variables' })
+      }
+
+      const subscribeResult = await sns.send(
+        new SubscribeCommand({
+          TopicArn: SNS_TOPIC_ARN,
+          Protocol: 'email',
+          Endpoint: email,
+        }),
+      )
+
+      return response(200, {
+        message: 'Subscription request sent. Check email and confirm SNS subscription.',
+        vendor_id: vendorId,
+        email,
+        subscription_arn: subscribeResult.SubscriptionArn,
+      })
     }
 
     if (method === 'PUT' && path.includes('/products/') && productId) {

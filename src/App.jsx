@@ -7,8 +7,8 @@ import {
   deleteProductInApi,
   fetchProductsFromApi,
   getLowStockItems,
+  subscribeEmailForSnsInApi,
   summarizeInventory,
-  toggleNotificationChannel,
   updateProductQuantityInApi,
 } from './services/inventoryService'
 
@@ -29,6 +29,9 @@ function App() {
     stock: '',
   })
   const [stockDelta, setStockDelta] = useState({})
+  const [snsEmail, setSnsEmail] = useState('')
+  const [snsStatus, setSnsStatus] = useState('')
+  const [isSubscribingSns, setIsSubscribingSns] = useState(false)
 
   const vendorOptions = useMemo(
     () => [...new Set(state.products.map((product) => product.vendor_id).filter(Boolean))].sort(),
@@ -144,10 +147,29 @@ function App() {
     }
   }
 
-  const notificationSettings = state.notifications[selectedVendorId]
+  const subscribeEmailForSns = async (event) => {
+    event.preventDefault()
+    const email = snsEmail.trim()
 
-  const updateNotification = (channel) => {
-    setState((current) => toggleNotificationChannel(current, selectedVendorId, channel))
+    if (!email) {
+      setSnsStatus('Please enter an email address.')
+      return
+    }
+
+    try {
+      setIsSubscribingSns(true)
+      await subscribeEmailForSnsInApi(PRODUCTS_API_BASE, {
+        vendor_id: selectedVendorId,
+        email,
+      })
+      setSnsStatus('Subscription request submitted. Check your email and confirm the SNS link to start receiving alerts.')
+      setSnsEmail('')
+    } catch (error) {
+      console.error('Failed to subscribe email for SNS', error)
+      setSnsStatus('Could not subscribe email. Please verify API route /notifications/subscribe is deployed.')
+    } finally {
+      setIsSubscribingSns(false)
+    }
   }
 
   useEffect(() => {
@@ -276,26 +298,21 @@ function App() {
         </article>
 
         <article className="panel">
-          <h3>Low-Stock Notifications (SNS Style Demo)</h3>
+          <h3>SNS Notification</h3>
           <p className="muted">Vendor: {selectedVendorId}</p>
-          <div className="toggle-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={notificationSettings?.email ?? false}
-                onChange={() => updateNotification('email')}
-              />
-              Email Alerts
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={notificationSettings?.sms ?? false}
-                onChange={() => updateNotification('sms')}
-              />
-              SMS Alerts
-            </label>
-          </div>
+          <form className="form-grid" onSubmit={subscribeEmailForSns}>
+            <input
+              type="email"
+              placeholder="Vendor email for SNS alerts"
+              value={snsEmail}
+              onChange={(event) => setSnsEmail(event.target.value)}
+            />
+            <button type="submit" disabled={isSubscribingSns}>
+              {isSubscribingSns ? 'Submitting...' : 'Subscribe Email'}
+            </button>
+          </form>
+          <p className="muted">After submitting, SNS sends a confirmation email. Alerts start only after confirmation.</p>
+          {snsStatus && <p className="muted">{snsStatus}</p>}
           <div className="alert-feed">
             {vendorAlerts.slice(0, 4).map((alert) => (
               <div key={alert.alert_id} className="alert-row">

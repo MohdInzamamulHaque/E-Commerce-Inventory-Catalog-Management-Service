@@ -226,6 +226,20 @@ export const deleteProductInApi = async (apiBaseUrl, productId) => {
   return response.json()
 }
 
+export const subscribeEmailForSnsInApi = async (apiBaseUrl, payload) => {
+  const response = await fetch(`${apiBaseUrl}/notifications/subscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to subscribe email (${response.status})`)
+  }
+
+  return response.json()
+}
+
 export const fetchProductsFromApi = async (apiBaseUrl) => {
   const response = await fetch(`${apiBaseUrl}/products`)
   if (!response.ok) {
